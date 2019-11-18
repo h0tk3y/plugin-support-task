@@ -8,8 +8,7 @@ import kotlin.concurrent.thread
 interface MusicPlayer : AutoCloseable {
     val playbackListeners: List<PlaybackListenerPlugin>
     var playbackState: PlaybackState
-
-    fun init(): Unit
+    fun init()
 }
 
 class JLayerMusicPlayer(
@@ -18,22 +17,11 @@ class JLayerMusicPlayer(
     @Volatile
     override var playbackState: PlaybackState = PlaybackState.Stopped
         set(value) {
-            if (value is PlaybackState.Playing && value.isResumed) {
-                require(field is PlaybackState.Paused && field.playlistPosition == value.playlistPosition) {
-                    "isResumed is only allowed when the previous state was com.h0tk3y.player.PlaybackState.Paused at the same track"
-                }
-            }
-
-            for (listener in playbackListeners) {
-                listener.onPlaybackStateChange(field, value)
-            }
-
-            field = value
-
-            newStateRendezvousChannel.put(value)
+            field = handlePlaybackStateWithListeners(field, value, playbackListeners)
+            newStateChannel.put(field)
         }
 
-    private val newStateRendezvousChannel = ArrayBlockingQueue<PlaybackState>(1)
+    private val newStateChannel = ArrayBlockingQueue<PlaybackState>(2)
 
     @Volatile
     private var closing = false
@@ -44,7 +32,7 @@ class JLayerMusicPlayer(
         var waitForNewPlaybackState: PlaybackState? = null
 
         while (!closing) {
-            val newPlaybackState = waitForNewPlaybackState ?: newStateRendezvousChannel.poll()
+            val newPlaybackState = waitForNewPlaybackState ?: newStateChannel.poll(50L, TimeUnit.MILLISECONDS)
             waitForNewPlaybackState = null
 
             when (newPlaybackState) {
@@ -57,12 +45,10 @@ class JLayerMusicPlayer(
                     currentPlayer = null
                 }
                 is PlaybackState.Playing -> {
-                    if (paused && newPlaybackState.isResumed)
-                        paused = false
-                    else {
+                    paused = false
+                    if (!newPlaybackState.isResumedFromPause) {
                         currentPlayer?.close()
-                        currentPlayer =
-                            Player(newPlaybackState.playlistPosition.currentTrack.byteStreamProvider())
+                        currentPlayer = Player(newPlaybackState.playlistPosition.currentTrack.byteStreamProvider())
                     }
                 }
             }
@@ -76,7 +62,7 @@ class JLayerMusicPlayer(
                 playbackState = if (playNext) {
                     PlaybackState.Playing(
                         playlistPosition.copy(position = playlistPosition.position + 1),
-                        isResumed = false
+                        isResumedFromPause = false
                     )
                 } else {
                     PlaybackState.Stopped
@@ -84,10 +70,6 @@ class JLayerMusicPlayer(
             }
             if (currentPlayer != null && !paused) {
                 currentPlayer.play(5)
-            } else {
-                waitForNewPlaybackState = newStateRendezvousChannel.poll(100,
-                    TimeUnit.MILLISECONDS
-                )
             }
         }
     }
@@ -98,5 +80,31 @@ class JLayerMusicPlayer(
 
     override fun close() {
         closing = true
+        newStateChannel.add(PlaybackState.Stopped)
+    }
+}
+
+internal fun handlePlaybackStateWithListeners(
+    oldPlaybackState: PlaybackState,
+    newPlaybackState: PlaybackState,
+    listeners: Iterable<PlaybackListenerPlugin>
+): PlaybackState {
+    var newValue = newPlaybackState
+    checkPause(oldPlaybackState, newPlaybackState)
+
+    for (listener in listeners) {
+        newValue = listener.onPlaybackStateChange(oldPlaybackState, newValue)?.also { checkPause(oldPlaybackState, it) }
+            ?: newValue
+    }
+
+    return newValue
+}
+
+private fun checkPause(oldPlaybackState: PlaybackState, newPlaybackState: PlaybackState) {
+    if (newPlaybackState is PlaybackState.Playing && newPlaybackState.isResumedFromPause) {
+        require(oldPlaybackState is PlaybackState.Paused && oldPlaybackState.playlistPosition == newPlaybackState.playlistPosition) {
+            "isResumedFromPreviousPosition is only allowed when the previous state " +
+                    "was com.h0tk3y.player.PlaybackState.Paused at the same track"
+        }
     }
 }
