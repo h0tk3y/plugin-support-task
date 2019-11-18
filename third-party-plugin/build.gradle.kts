@@ -9,5 +9,5 @@ repositories {
 
 dependencies {
     implementation(kotlin("stdlib"))
-    implementation(rootProject)
+    compileOnly(rootProject)
 }

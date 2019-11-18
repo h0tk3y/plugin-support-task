@@ -4,47 +4,63 @@ import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URLClassLoader
-import java.util.*
+import kotlin.reflect.KMutableProperty
+import kotlin.reflect.full.memberProperties
+import kotlin.reflect.full.primaryConstructor
 
-abstract class MusicPlugin {
-    open val pluginId: String
+interface MusicPlugin {
+    val pluginId: String
         get() = javaClass.canonicalName
 
     /** Called upon application start to initialize the plugin. The [persistedState] is the byte stream written by
      * [persist], if present. */
-    abstract fun init(persistedState: InputStream?)
+    fun init(persistedState: InputStream?)
 
-    /** Called on a plugin instance to instruct it to persist any of its state. The plugin is allowed to use the
+    /** Called on a plugin instance to instruct it to persist all of its state. The plugin is allowed to use the
      * [stateStream] for storing the state, but should not close the [stateStream].
      *
      * May be called multiple times during application execution.
      *
      * If [MusicApp.isClosed] is true on the [musicAppInstance], the plugin should also yield all of its resources
      * and gracefully teardown.*/
-    abstract fun persist(stateStream: OutputStream)
+    fun persist(stateStream: OutputStream)
 
-    /** A reference to the application instance. Must be initialized by the application immediately after it loads
-     * the plugin, before [init] is called. */
-    lateinit var musicAppInstance: MusicApp
+    /** A reference to the application instance.
+     *
+     * A plugin may override this property as the single parameter of the primary constructor or a mutable property
+     * (then the class must contain a no-argument constructor).
+     *
+     * In both cases, the application that instantiates the plugin must provide the value for the property.
+     * If this property cannot be initialized in either way, the application must throw an [IllegalPluginException]
+     * */
+    val musicAppInstance: MusicApp
 }
 
-abstract class PipelineContributorPlugin<T> : MusicPlugin() {
+class IllegalPluginException(val pluginClass: Class<*>) : Exception(
+    "Illegal plugin class $pluginClass."
+)
+
+class PluginClassNotFoundException(val pluginClassName: String) : ClassNotFoundException(
+    "Plugin class $pluginClassName not found."
+)
+
+interface PipelineContributorPlugin<T> : MusicPlugin {
     /** Plugins with lower preferred order should contribute to the pipeline earlier, that is, their results may
      * be altered by the plugins with higher preferred order. */
-    abstract val preferredOrder: Int
+    val preferredOrder: Int
 
-    abstract fun contribute(current: T): T
+    fun contribute(current: T): T
 }
 
-abstract class MusicLibraryContributorPlugin : PipelineContributorPlugin<MusicLibrary>()
+interface MusicLibraryContributorPlugin : PipelineContributorPlugin<MusicLibrary>
 
-abstract class PlaybackListenerPlugin : MusicPlugin() {
-    abstract fun onPlaybackStateChange(oldPlaybackState: PlaybackState, newPlaybackState: PlaybackState)
+interface PlaybackListenerPlugin : MusicPlugin {
+    fun onPlaybackStateChange(oldPlaybackState: PlaybackState, newPlaybackState: PlaybackState)
 }
 
 open class MusicApp(
     private val pluginClasspath: List<File>,
-    private val enabledPluginIds: Set<String>
+    private val enabledPluginClasses: Set<String>
 ) : AutoCloseable {
     private fun pluginStateFile(pluginId: String) = File("musicApp/pluginState/$pluginId/state.dat")
 
@@ -57,21 +73,60 @@ open class MusicApp(
             plugin.init(persistedState)
         }
 
+        musicLibrary // access to initialize
+
         player.init()
     }
 
-    private val plugins: List<MusicPlugin> by lazy {
-        val pluginClassLoader = URLClassLoader(pluginClasspath.map { it.toURI().toURL() }.toTypedArray())
-        val plugins = ServiceLoader.load(MusicPlugin::class.java, pluginClassLoader)
-        val enabledPlugins = plugins.filter { it.pluginId in enabledPluginIds }
-        enabledPlugins.forEach { plugin ->
-            plugin.musicAppInstance = this
-        }
-        enabledPlugins
+    fun wipePersistedPluginData() {
+        File("musicApp/pluginState").deleteRecursively()
     }
 
-    fun <T : MusicPlugin> getPlugin(pluginId: String, pluginClass: Class<T>): MusicPlugin? =
-        getPlugins(pluginClass).single { it.pluginId == pluginId }
+    private val pluginClassLoader: ClassLoader =
+        URLClassLoader(pluginClasspath.map { it.toURI().toURL() }.toTypedArray())
+
+    private val plugins: List<MusicPlugin> by lazy {
+        enabledPluginClasses.map { pluginClassName ->
+            val pluginClass = try {
+                Class.forName(pluginClassName, true, pluginClassLoader)
+            } catch (_: ClassNotFoundException) {
+                throw PluginClassNotFoundException(pluginClassName)
+            }
+
+            val kclass = pluginClass.kotlin
+
+            val primaryConstructor = kclass.primaryConstructor
+            if (primaryConstructor?.parameters?.singleOrNull()?.type?.classifier == MusicApp::class)
+                return@map primaryConstructor.call(this@MusicApp) as MusicPlugin
+
+            val noArgConstructor = kclass.constructors.find { it.parameters.isEmpty() }
+                ?: throw IllegalPluginException(pluginClass)
+
+            val appInstanceProperty =
+                kclass.memberProperties.single { it.name == MusicPlugin::musicAppInstance.name }
+
+            if (appInstanceProperty is KMutableProperty<*>) {
+                return@map noArgConstructor.call().also { result ->
+                    appInstanceProperty.setter.call(result, this@MusicApp)
+                } as MusicPlugin
+            } else throw IllegalPluginException(pluginClass)
+        }
+    }
+
+    fun findSinglePlugin(pluginClassName: String): MusicPlugin? {
+        val pluginClass = try {
+            pluginClassLoader.loadClass(pluginClassName)
+        } catch (e: ClassNotFoundException) {
+            return null
+        }
+
+        if (!MusicPlugin::class.java.isAssignableFrom(pluginClass)) {
+            return null
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        return getPlugins(pluginClass as Class<out MusicPlugin>).singleOrNull()
+    }
 
     fun <T : MusicPlugin> getPlugins(pluginClass: Class<T>): List<T> =
         plugins.filterIsInstance(pluginClass)
@@ -82,10 +137,11 @@ open class MusicApp(
     protected val playbackListeners: List<PlaybackListenerPlugin>
         get() = getPlugins(PlaybackListenerPlugin::class.java)
 
-    val musicLibrary: MusicLibrary =
+    val musicLibrary: MusicLibrary by lazy {
         musicLibraryContributors
             .sortedWith(compareBy({ it.preferredOrder }, { it.pluginId }))
             .fold(MusicLibrary(mutableListOf())) { acc, it -> it.contribute(acc) }
+    }
 
     open val player: MusicPlayer by lazy {
         JLayerMusicPlayer(
@@ -103,14 +159,16 @@ open class MusicApp(
 
     fun nextOrStop() = player.playbackState.playlistPosition?.let {
         val nextPosition = it.position + 1
-        player.playbackState = if (nextPosition in it.playlist.tracks.indices)
-            PlaybackState.Playing(
-                PlaylistPosition(
-                    it.playlist,
-                    nextPosition
-                ), isResumed = false)
-        else
-            PlaybackState.Stopped
+        player.playbackState =
+            if (nextPosition in it.playlist.tracks.indices)
+                PlaybackState.Playing(
+                    PlaylistPosition(
+                        it.playlist,
+                        nextPosition
+                    ), isResumed = false
+                )
+            else
+                PlaybackState.Stopped
     }
 
     @Volatile
@@ -129,45 +187,4 @@ open class MusicApp(
         }
         player.close()
     }
-}
-
-fun main(args: Array<String>) {
-    val beepTracks = (1..4).map {
-        Track(
-            mapOf(
-                TrackMetadataKeys.ARTIST to "beep${it}Artist",
-                TrackMetadataKeys.NAME to "beep-$it"
-            ),
-            File("beep-$it.mp3")
-        )
-    }
-
-    val sampleTracks = (1..4).map {
-        Track(
-            mapOf(
-                TrackMetadataKeys.ARTIST to "sample${it}Artist",
-                TrackMetadataKeys.NAME to "sample-$it"
-            ),
-            File("sample-$it.mp3")
-        )
-    }
-
-    StaticPlaylistsLibraryContributor.playlists += Playlist("beeps", beepTracks)
-    StaticPlaylistsLibraryContributor.playlists += Playlist(
-        "samples",
-        sampleTracks
-    )
-
-    val pluginClasspathParentDirs = args.map { File(it) }
-    val pluginFiles = pluginClasspathParentDirs.flatMap { it.listFiles()?.toList().orEmpty() }
-
-    MusicApp(
-        pluginFiles,
-        setOf(
-            ConsolePlaybackReporterPlugin::class.java.canonicalName,
-            ConsoleControlsPlugin::class.java.canonicalName,
-            StaticPlaylistsLibraryContributor::class.java.canonicalName,
-            "com.h0tk3y.third.party.plugin.UsageStatsPlugin"
-        )
-    ).init()
 }

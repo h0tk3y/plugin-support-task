@@ -1,30 +1,36 @@
+package com.h0tk3y.player.test
+
 import com.h0tk3y.player.*
 import org.junit.Before
 import org.junit.Test
 import java.io.File
 
-class MockApp(
+class TestableMusicApp(
     pluginClasspath: List<File>,
     enabledPluginIds: Set<String>
 ) : MusicApp(
     pluginClasspath,
     enabledPluginIds
 ) {
-    override val player: MockPlayer by lazy { MockPlayer(playbackListeners) }
+    override val player: MockPlayer by lazy {
+        MockPlayer(
+            playbackListeners
+        )
+    }
 }
 
 class AppTests {
-    lateinit var app: MockApp
+    lateinit var app: TestableMusicApp
 
     @Before
     fun init() {
-        app = MockApp(emptyList(), emptySet()).apply { init() }
+        app = TestableMusicApp(emptyList(), emptySet()).apply { init() }
     }
 
     @Test
     fun testNone() {
-        val track1 = Track(mapOf(), { TODO() })
-        val track2 = Track(mapOf(), { TODO() })
+        val track1 = Track(mutableMapOf(), { TODO() })
+        val track2 = Track(mutableMapOf(), { TODO() })
         val playlist = Playlist("my", listOf(track1, track2))
         app.player.playbackState = PlaybackState.Playing(PlaylistPosition(playlist, 0), isResumed = false)
         app.player.finishedTrack()

@@ -3,6 +3,8 @@
 .gradle
 **/build/**
 
+**/*.dat
+
 # Ignore Gradle GUI config
 gradle-app.setting
 

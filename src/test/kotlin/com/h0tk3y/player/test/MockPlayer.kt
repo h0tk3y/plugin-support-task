@@ -1,3 +1,5 @@
+package com.h0tk3y.player.test
+
 import com.h0tk3y.player.MusicPlayer
 import com.h0tk3y.player.PlaybackListenerPlugin
 import com.h0tk3y.player.PlaybackState

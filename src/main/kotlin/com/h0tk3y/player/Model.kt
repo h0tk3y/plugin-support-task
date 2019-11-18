@@ -9,8 +9,8 @@ object TrackMetadataKeys {
     val ALBUM = "album"
 }
 
-data class Track(val metadata: Map<String, String>, val byteStreamProvider: () -> InputStream) {
-    constructor(metadata: Map<String, String>, file: File) : this(metadata, { file.inputStream() })
+data class Track(val metadata: MutableMap<String, String>, val byteStreamProvider: () -> InputStream) {
+    constructor(metadata: Map<String, String>, file: File) : this(metadata.toMutableMap(), { file.inputStream() })
 }
 
 val Track.simpleStringRepresentation

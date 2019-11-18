@@ -3,7 +3,7 @@ package com.h0tk3y.player
 import java.io.InputStream
 import java.io.OutputStream
 
-class ConsolePlaybackReporterPlugin : PlaybackListenerPlugin() {
+class ConsolePlaybackReporterPlugin(override val musicAppInstance: MusicApp) : PlaybackListenerPlugin {
     override fun onPlaybackStateChange(oldPlaybackState: PlaybackState, newPlaybackState: PlaybackState) {
         when (newPlaybackState) {
             is PlaybackState.Playing -> {

@@ -4,12 +4,10 @@ import java.io.InputStream
 import java.io.OutputStream
 import kotlin.concurrent.thread
 
-class ConsoleControlsPlugin : MusicPlugin() {
+class ConsoleControlsPlugin(override val musicAppInstance: MusicApp) : MusicPlugin {
     private lateinit var consoleThread: Thread
 
-    private fun printPrompt() {
-        print("> ")
-    }
+    private fun printPrompt() = print("> ")
 
     private fun printHelp() {
         println("""
