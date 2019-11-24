@@ -1,18 +1,29 @@
 package com.h0tk3y.player
 
 import java.io.File
+import java.lang.IllegalArgumentException
+import java.net.URLClassLoader
+import kotlin.jvm.internal.Reflection
+import kotlin.reflect.KClass
+import kotlin.reflect.KFunction
+import kotlin.reflect.full.isSubtypeOf
+import kotlin.reflect.full.primaryConstructor
+import kotlin.reflect.jvm.jvmErasure
+import kotlin.reflect.jvm.kotlinFunction
 
 open class MusicApp(
     private val pluginClasspath: List<File>,
     private val enabledPluginClasses: Set<String>
 ) : AutoCloseable {
     fun init() {
-        /**
-         * TODO: Инициализировать плагины с помощью функции [MusicPlugin.init],
-         *       предоставив им байтовые потоки их состояния (для тех плагинов, для которых они сохранены).
-         *       Обратите внимание на cлучаи, когда необходимо выбрасывать исключения
-         *       [IllegalPluginException] и [PluginClassNotFoundException].
-         **/
+        plugins.forEach {
+            val data = File(pluginDataDir, it.pluginId)
+            if (data.exists()) {
+                it.init(data.inputStream())
+            } else {
+                it.init(null)
+            }
+        }
 
         musicLibrary // access to initialize
         player.init()
@@ -22,26 +33,49 @@ open class MusicApp(
         if (isClosed) return
         isClosed = true
 
-        /** TODO: Сохранить состояние плагинов с помощью [MusicPlugin.persist]. */
+        plugins.forEach {
+            val data = File(pluginDataDir, it.pluginId)
+            if (!data.exists()) {
+                data.createNewFile()
+            }
+            it.persist(data.outputStream())
+        }
     }
 
     fun wipePersistedPluginData() {
-        // TODO: Удалить сохранённое состояние плагинов.
+        pluginDataDir.deleteRecursively()
     }
 
-    private val pluginClassLoader: ClassLoader = TODO("Создать загрузчик классов для плагинов.")
+    private val pluginClassLoader: ClassLoader =
+        URLClassLoader(pluginClasspath.map { it.toURI().toURL() }.toTypedArray())
 
     private val plugins: List<MusicPlugin> by lazy {
-        /**
-         * TODO используя [pluginClassLoader] и следуя контракту [MusicPlugin],
-         *      загрузить плагины, перечисленные в [enabledPluginClasses].
-         *      Эта функция не должна вызывать [MusicPlugin.init]
-         */
-        emptyList<MusicPlugin>()
+        enabledPluginClasses.map {
+            val jclass: Class<*>
+            try {
+                jclass = pluginClassLoader.loadClass(it)
+            } catch (e: Exception) {
+                throw PluginClassNotFoundException(it)
+            }
+            val kclass = Reflection.createKotlinClass(jclass)
+            try {
+                val cons = kclass.primaryConstructor ?: throw Exception()
+                val plugin: MusicPlugin
+                // primary constructor with only one parameter
+                if (cons.parameters.size == 1 && cons.parameters[0].type.jvmErasure == MusicApp::class) {
+                    plugin = cons.call(this) as MusicPlugin
+                } else { // or zero parameter constructor, but property must be mutable
+                    plugin = cons.call() as MusicPlugin
+                    jclass.methods.single { it.name == "setMusicAppInstance" }.invoke(plugin, this)
+                }
+                plugin
+            } catch (e: Exception) {
+                throw IllegalPluginException(kclass.java)
+            }
+        }
     }
 
-    fun findSinglePlugin(pluginClassName: String): MusicPlugin? =
-        TODO("Если есть единственный плагин, принадлежащий типу по имени pluginClassName, вернуть его, иначе null.")
+    fun findSinglePlugin(pluginClassName: String): MusicPlugin? = plugins.find { it::class.java.name == pluginClassName }
 
     fun <T : MusicPlugin> getPlugins(pluginClass: Class<T>): List<T> =
         plugins.filterIsInstance(pluginClass)
@@ -69,7 +103,8 @@ open class MusicApp(
             PlaylistPosition(
                 playlist,
                 fromPosition
-            ), isResumed = false)
+            ), isResumed = false
+        )
     }
 
     fun nextOrStop() = player.playbackState.playlistPosition?.let {
@@ -89,4 +124,14 @@ open class MusicApp(
     @Volatile
     var isClosed = false
         private set
+
+    val pluginDataLocation = ".musicapp"
+    val pluginDataDir: File
+        get() {
+            val res = File(pluginDataLocation)
+            if (!res.exists()) {
+                res.mkdirs()
+            }
+            return res
+        }
 }
