@@ -14,9 +14,13 @@ open class MusicApp(
 ) : AutoCloseable {
     fun init() {
 
-        plugins.forEach {
-            val file = File(it::class.simpleName + ".txt").createNewFile()
-            it.init(File(it::class.simpleName + ".txt").inputStream())
+        try {
+            plugins.forEach {
+                val file = File(it::class.simpleName + ".txt").createNewFile()
+                it.init(File(it::class.simpleName + ".txt").inputStream())
+            }
+        } catch (e: ClassNotFoundException) {
+            throw PluginClassNotFoundException(e.message!!)
         }
         /**
          * TODO: Инициализировать плагины с помощью функции [MusicPlugin.init],
