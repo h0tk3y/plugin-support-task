@@ -1,17 +1,32 @@
 package com.h0tk3y.player
 
-import java.io.File
+import java.io.*
+import java.net.URLClassLoader
+import kotlin.reflect.KMutableProperty
+import kotlin.reflect.full.*
 
 open class MusicApp(
     private val pluginClasspath: List<File>,
     private val enabledPluginClasses: Set<String>
 ) : AutoCloseable {
+
+    private fun fileByPlugin(p: MusicPlugin) : File {
+        val f = File(p.pluginId + "Metadata.txt")
+        f.createNewFile()
+        return f
+    }
+
     fun init() {
+        plugins.forEach {
+            val stream = FileInputStream(fileByPlugin(it))
+            it.init(stream)
+            stream.close()
+        }
         /**
-         * TODO: Инициализировать плагины с помощью функции [MusicPlugin.init],
-         *       предоставив им байтовые потоки их состояния (для тех плагинов, для которых они сохранены).
-         *       Обратите внимание на cлучаи, когда необходимо выбрасывать исключения
-         *       [IllegalPluginException] и [PluginClassNotFoundException].
+         * Инициализировать плагины с помощью функции [MusicPlugin.init],
+         * предоставив им байтовые потоки их состояния (для тех плагинов, для которых они сохранены).
+         * Обратите внимание на cлучаи, когда необходимо выбрасывать исключения
+         * [IllegalPluginException] и [PluginClassNotFoundException].
          **/
 
         musicLibrary // access to initialize
@@ -22,26 +37,61 @@ open class MusicApp(
         if (isClosed) return
         isClosed = true
 
-        /** TODO: Сохранить состояние плагинов с помощью [MusicPlugin.persist]. */
+        plugins.forEach {
+            val stream = FileOutputStream(fileByPlugin(it))
+            it.persist(stream)
+            stream.close()
+        }
+        /** Сохранить состояние плагинов с помощью [MusicPlugin.persist]. */
     }
 
     fun wipePersistedPluginData() {
-        // TODO: Удалить сохранённое состояние плагинов.
+        plugins.forEach {fileByPlugin(it).delete() }
+        /** Удалить сохранённое состояние плагинов. */
     }
 
-    private val pluginClassLoader: ClassLoader = TODO("Создать загрузчик классов для плагинов.")
+    private val pluginClassLoader: ClassLoader = URLClassLoader(
+        pluginClasspath.map { it.toURI().toURL() }.toTypedArray()
+    )
 
     private val plugins: List<MusicPlugin> by lazy {
+        enabledPluginClasses.map {plugin ->
+            val c = try {
+                pluginClassLoader.loadClass(plugin)
+            } catch (e: ClassNotFoundException) {
+                throw PluginClassNotFoundException(plugin)
+            }
+            val primaryCon = c.kotlin.primaryConstructor
+            if (primaryCon != null && primaryCon.parameters.size == 1 &&
+                primaryCon.parameters[0].type.toString() == MusicApp::class.qualifiedName) {
+                primaryCon.call(this) as MusicPlugin
+            } else  {
+                val con = c.kotlin.constructors.singleOrNull {
+                    it.parameters.isEmpty()
+                } ?: throw IllegalPluginException(c)
+
+                val instance = con.call() as MusicPlugin
+
+                val app = c.kotlin.declaredMemberProperties.find {
+                    it is KMutableProperty<*> && it.name == "musicAppInstance"
+                } ?: throw IllegalPluginException(c)
+                (app as KMutableProperty<*>).setter.call(instance, this)
+
+                instance
+            }
+        }
         /**
-         * TODO используя [pluginClassLoader] и следуя контракту [MusicPlugin],
-         *      загрузить плагины, перечисленные в [enabledPluginClasses].
-         *      Эта функция не должна вызывать [MusicPlugin.init]
+         * используя [pluginClassLoader] и следуя контракту [MusicPlugin],
+         * загрузить плагины, перечисленные в [enabledPluginClasses].
+         * Эта функция не должна вызывать [MusicPlugin.init]
          */
-        emptyList<MusicPlugin>()
     }
 
     fun findSinglePlugin(pluginClassName: String): MusicPlugin? =
-        TODO("Если есть единственный плагин, принадлежащий типу по имени pluginClassName, вернуть его, иначе null.")
+        plugins.singleOrNull {
+            it::class.qualifiedName == pluginClassName
+        }
+    /** Если есть единственный плагин, принадлежащий fтипу по имени pluginClassName, вернуть его, иначе null.*/
 
     fun <T : MusicPlugin> getPlugins(pluginClass: Class<T>): List<T> =
         plugins.filterIsInstance(pluginClass)

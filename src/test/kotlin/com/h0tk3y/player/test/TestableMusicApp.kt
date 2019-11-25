@@ -4,6 +4,7 @@ import com.h0tk3y.player.*
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.io.FileInputStream
 
 class TestableMusicApp(
     pluginClasspath: List<File>,
@@ -29,8 +30,12 @@ class AppTests {
 
     @Test
     fun testNone() {
-        val track1 = Track(mutableMapOf(), { TODO() })
-        val track2 = Track(mutableMapOf(), { TODO() })
+        val track1 = Track(mutableMapOf()) {
+            FileInputStream(File("sounds/beep-1.mp3"))
+        }
+        val track2 = Track(mutableMapOf()) {
+            FileInputStream(File("sounds/beep-2.mp3"))
+        }
         val playlist = Playlist("my", listOf(track1, track2))
         app.player.playbackState = PlaybackState.Playing(PlaylistPosition(playlist, 0), isResumed = false)
         app.player.finishedTrack()
