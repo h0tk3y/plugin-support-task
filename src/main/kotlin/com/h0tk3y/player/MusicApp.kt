@@ -11,16 +11,16 @@ open class MusicApp(
 ) : AutoCloseable {
 
     private fun fileByPlugin(p: MusicPlugin) : File {
-        val f = File(p.pluginId + "Metadata.txt")
+        val f = File("pluginsData/" + p.pluginId + "Metadata.txt")
         f.createNewFile()
         return f
     }
 
     fun init() {
         plugins.forEach {
-            val stream = FileInputStream(fileByPlugin(it))
-            it.init(stream)
-            stream.close()
+            FileInputStream(fileByPlugin(it)).use { input ->
+                it.init(input)
+            }
         }
         /**
          * Инициализировать плагины с помощью функции [MusicPlugin.init],
@@ -38,9 +38,9 @@ open class MusicApp(
         isClosed = true
 
         plugins.forEach {
-            val stream = FileOutputStream(fileByPlugin(it))
-            it.persist(stream)
-            stream.close()
+            FileOutputStream(fileByPlugin(it)).use { output ->
+                it.persist(output)
+            }
         }
         /** Сохранить состояние плагинов с помощью [MusicPlugin.persist]. */
     }
@@ -63,7 +63,7 @@ open class MusicApp(
             }
             val primaryCon = c.kotlin.primaryConstructor
             if (primaryCon != null && primaryCon.parameters.size == 1 &&
-                primaryCon.parameters[0].type.toString() == MusicApp::class.qualifiedName) {
+                primaryCon.parameters[0].type.classifier == MusicApp::class) {
                 primaryCon.call(this) as MusicPlugin
             } else  {
                 val con = c.kotlin.constructors.singleOrNull {
@@ -72,8 +72,9 @@ open class MusicApp(
 
                 val instance = con.call() as MusicPlugin
 
-                val app = c.kotlin.declaredMemberProperties.find {
+                val app = c.kotlin.memberProperties.find {
                     it is KMutableProperty<*> && it.name == "musicAppInstance"
+                            && it.returnType.classifier == MusicApp::class
                 } ?: throw IllegalPluginException(c)
                 (app as KMutableProperty<*>).setter.call(instance, this)
 

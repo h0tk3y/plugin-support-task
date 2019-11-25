@@ -37,6 +37,7 @@ class AdsPlugin(override val musicAppInstance: MusicApp) :
                     ads.removeAt(0)
                 }
                 ads.add(adTexts[(0 until adTexts.size).random()])
+                println(ads.last())
             }
         }
     }
