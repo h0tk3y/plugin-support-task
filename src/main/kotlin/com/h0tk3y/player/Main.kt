@@ -12,7 +12,8 @@ fun main(args: Array<String>) {
             ConsolePlaybackReporterPlugin::class.java.canonicalName,
             ConsoleControlsPlugin::class.java.canonicalName,
             StaticPlaylistsLibraryContributor::class.java.canonicalName,
-            "com.h0tk3y.third.party.plugin.UsageStatsPlugin"
+            "com.h0tk3y.third.party.plugin.UsageStatsPlugin",
+            "com.h0tk3y.third.party.plugin.AdsPlugin"
         )
     ).init()
 }
