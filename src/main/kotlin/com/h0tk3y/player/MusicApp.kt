@@ -15,11 +15,13 @@ open class MusicApp(
     private fun getFileName(plugin: MusicPlugin) = "${plugin.pluginId}.dat";
 
     fun init() {
-        plugins.forEach {
+        for (plugin in plugins) {
             try {
-                it.init(FileInputStream(getFileName(it)))
+                FileInputStream(getFileName(plugin)).use {
+                    plugin.init(it)
+                }
             } catch (err: FileNotFoundException) {
-                it.init(null)
+                plugin.init(null)
             }
         }
         /**
@@ -37,8 +39,10 @@ open class MusicApp(
         if (isClosed) return
         isClosed = true
 
-        plugins.forEach {
-            it.persist(FileOutputStream(getFileName(it)))
+        for (plugin in plugins) {
+            FileOutputStream(getFileName(plugin)).use {
+                plugin.persist(it)
+            }
         }
         /** TODO: Сохранить состояние плагинов с помощью [MusicPlugin.persist]. */
     }
