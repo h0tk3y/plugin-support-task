@@ -20,6 +20,7 @@ dependencies {
     implementation("com.googlecode.soundlibs:vorbisspi:1.0.3-1")
 
     runtimeClasspath(project(":third-party-plugin"))
+    runtimeClasspath(project(":myplugin-plugin"))
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit")
     testCompileOnly(project(":third-party-plugin"))
@@ -27,6 +28,7 @@ dependencies {
 
 // Workaround: ensure that the IDE forces the JAR to be built upon classes launch time:
 tasks["classes"].finalizedBy(":third-party-plugin:classes")
+tasks["classes"].finalizedBy(":myplugin-plugin:classes")
 
 
 application {
