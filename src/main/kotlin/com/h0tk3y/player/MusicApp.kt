@@ -8,24 +8,17 @@ import kotlin.reflect.full.memberProperties
 import kotlin.reflect.full.primaryConstructor
 
 open class MusicApp(
-    pluginPaths: List<MusicPluginPath>
+    private val pluginPaths: List<MusicPluginPath>
 ) : AutoCloseable {
-    private fun pluginStateFile(pluginId: String) = pluginDataRoot.resolve("$pluginId/state.dat")
-
-    open val pluginDataRoot: File get() = File("musicApp/pluginState")
-
-    protected open fun getPluginDataInputStream(plugin: MusicPlugin): InputStream? =
-        pluginStateFile(plugin.pluginId)
-            .takeIf { it.isFile }
-            ?.inputStream()
-            ?.use { it.readBytes().inputStream() }
 
     fun init() {
-        plugins.forEach { plugin ->
-            getPluginDataInputStream(plugin).use { persistedState ->
-                plugin.init(persistedState)
-            }
-        }
+        /**
+         * TODO: Инициализировать плагины с помощью функции [MusicPlugin.init],
+         *       предоставив им байтовые потоки их состояния (для тех плагинов, для которых они сохранены,
+         *       для остальных – null).
+         *  Обратите внимание на cлучаи, когда необходимо выбрасывать исключения
+         *       [IllegalPluginException] и [PluginClassNotFoundException].
+         **/
 
         musicLibrary // access to initialize
 
@@ -33,69 +26,21 @@ open class MusicApp(
     }
 
     fun wipePersistedPluginData() {
-        File("musicApp/pluginState").deleteRecursively()
+        TODO("Очистить сохраненные данные плагинов")
     }
 
-    private val pluginPathByClassName: Map<String, MusicPluginPath> = pluginPaths.flatMap { path ->
-        path.pluginClasses.map { it to path }
-    }.toMap()
-
-    private val pluginClassLoaderByPath: Map<MusicPluginPath, ClassLoader> =
-        pluginPaths.associateWith {
-            val loaderName = it.pluginClasses.joinToString(", ", "[", "]") { it.substringAfterLast(".") }
-            URLClassLoader(loaderName, it.pluginClasspath.map { it.toURI().toURL() }.toTypedArray(), javaClass.classLoader)
-        }
-
-    private val plugins: List<MusicPlugin> by lazy {
-        pluginClassLoaderByPath.flatMap { (pluginPath, pluginClassLoader) ->
-            val pluginClassNames = pluginPath.pluginClasses
-            pluginClassNames.map { pluginClassName ->
-                val pluginClass = try {
-                    Class.forName(pluginClassName, true, pluginClassLoader)
-                } catch (_: ClassNotFoundException) {
-                    throw PluginClassNotFoundException(pluginClassName)
-                }
-
-                val kclass = pluginClass.kotlin
-
-                val primaryConstructor = kclass.primaryConstructor
-                if (primaryConstructor?.parameters?.singleOrNull()?.type?.classifier == MusicApp::class)
-                    return@map primaryConstructor.call(this@MusicApp) as MusicPlugin
-
-                val noArgConstructor = kclass.constructors.find { it.parameters.isEmpty() }
-                    ?: throw IllegalPluginException(pluginClass)
-
-                val appInstanceProperty =
-                    kclass.memberProperties.single { it.name == MusicPlugin::musicAppInstance.name }
-
-                if (appInstanceProperty is KMutableProperty<*>) {
-                    return@map noArgConstructor.call().also { result ->
-                        appInstanceProperty.setter.call(result, this@MusicApp)
-                    } as MusicPlugin
-                } else throw IllegalPluginException(pluginClass)
-            }
-        }
+    /** TODO, следуя контракту [MusicPlugin] и [MusicPluginPath], загрузить плагины, перечисленные в [pluginPaths].
+     *  Эта функция не должна вызывать [MusicPlugin.init], это нужно сделать в [init].
+     */
+    private val plugins: List<MusicPlugin> by lazy<List<MusicPlugin>> {
+        TODO()
     }
 
-    fun findSinglePlugin(pluginClassName: String): MusicPlugin? {
-        val pluginPath = pluginPathByClassName[pluginClassName] ?: return null
-        val pluginClassLoader = pluginClassLoaderByPath.getValue(pluginPath)
-        val pluginClass = try {
-            pluginClassLoader.loadClass(pluginClassName)
-        } catch (e: ClassNotFoundException) {
-            return null
-        }
-
-        if (!MusicPlugin::class.java.isAssignableFrom(pluginClass)) {
-            return null
-        }
-
-        @Suppress("UNCHECKED_CAST")
-        val matchingPlugins = getPlugins(pluginClass as Class<out MusicPlugin>)
-
-        return matchingPlugins.singleOrNull { it.javaClass.canonicalName == pluginClassName }
-            ?: matchingPlugins.singleOrNull()
-    }
+    fun findSinglePlugin(pluginClassName: String): MusicPlugin? =
+        TODO("Если есть единственный плагин класса [pluginClassName], вернуть его. " +
+                "Если есть несколько плагинов (этого типа и его подтипов), " +
+                "но один из них имеет в точности такой класс, вернуть его." + "" +
+                "Иначе вернуть null")
 
     fun <T : MusicPlugin> getPlugins(pluginClass: Class<T>): List<T> =
         plugins.filterIsInstance(pluginClass)
@@ -148,13 +93,7 @@ open class MusicApp(
     override fun close() {
         if (isClosed) return
         isClosed = true
-        plugins.forEach { plugin ->
-            val pluginStateFile = pluginStateFile(plugin.pluginId)
-            pluginStateFile.parentFile.mkdirs()
-            pluginStateFile.outputStream().use { output ->
-                plugin.persist(output)
-            }
-        }
-        player.close()
+
+        /** TODO: Сохранить состояние плагинов с помощью [MusicPlugin.persist]. */
     }
 }
