@@ -9,30 +9,40 @@ import kotlin.test.*
 private val thirdPartyPluginClasses: List<File> =
     System.getProperty("third-party-plugin-classes").split(File.pathSeparator).map { File(it) }
 
-private val usageStatsPluginName = "com.h0tk3y.third.party.plugin.UsageStatsPlugin"
-private val pluginWithAppPropertyName = "com.h0tk3y.third.party.plugin.PluginWithAppProperty"
+private const val usageStatsPluginName = "com.h0tk3y.third.party.plugin.UsageStatsPlugin"
+private const val pluginWithAppPropertyName = "com.h0tk3y.third.party.plugin.PluginWithAppProperty"
 
-class PluginSupportTest {
-
-    private val defaultEnabledPlugins = setOf(
-        StaticPlaylistsLibraryContributor::class.java.canonicalName,
-        usageStatsPluginName,
-        pluginWithAppPropertyName
+internal class PluginSupportTest {
+    private val defaultPlugins = listOf(
+        MusicPluginPath(listOf(StaticPlaylistsLibraryContributor::class.java.canonicalName), listOf()),
+        MusicPluginPath(listOf(usageStatsPluginName), thirdPartyPluginClasses),
+        MusicPluginPath(listOf(pluginWithAppPropertyName), thirdPartyPluginClasses)
     )
 
     private fun withApp(
         wipePersistedData: Boolean = false,
-        pluginClasspath: List<File> = thirdPartyPluginClasses,
-        enabledPlugins: Set<String> = defaultEnabledPlugins,
+        pluginPath: List<MusicPluginPath> = defaultPlugins,
         doTest: TestableMusicApp.() -> Unit
     ) {
-        val app = TestableMusicApp(pluginClasspath, enabledPlugins)
+        val app = TestableMusicApp(pluginPath)
         if (wipePersistedData) {
             app.wipePersistedPluginData()
         }
         app.use {
             it.init()
             it.doTest()
+        }
+    }
+
+    @Test
+    fun testPluginLoadedByChildClassloader() {
+        withApp(
+            pluginPath = listOf(
+                MusicPluginPath(listOf(pluginWithAppPropertyName), thirdPartyPluginClasses)
+            )
+        ) {
+            val loader = this.getPlugins(MusicPlugin::class.java).single().javaClass.classLoader
+            assertEquals(MusicPlugin::class.java.classLoader, loader.parent)
         }
     }
 
@@ -46,6 +56,50 @@ class PluginSupportTest {
         withApp {
             val value = assertNotNull(findSinglePlugin(usageStatsPluginName))
             assertEquals(2, value.javaClass.getMethod("getRunCount")(value))
+        }
+    }
+
+    @Test
+    fun testDontLoadSamePluginTwice() {
+        withApp(
+            pluginPath = listOf(
+                MusicPluginPath(listOf(pluginWithAppPropertyName), thirdPartyPluginClasses),
+                MusicPluginPath(listOf(pluginWithAppPropertyName), thirdPartyPluginClasses)
+            )
+        ) {
+            val plugins = this.getPlugins(MusicPlugin::class.java)
+            assertEquals(1, plugins.size)
+            assertEquals(pluginWithAppPropertyName, plugins.single().javaClass.canonicalName)
+        }
+    }
+
+    @Test
+    fun testPluginIsolation() {
+        val pluginClasses = listOf(
+            pluginWithAppPropertyName,
+            "com.h0tk3y.third.party.plugin.ExtendPluginWithAppProperty"
+        )
+        withApp(
+            pluginPath = pluginClasses.map { MusicPluginPath(listOf(it), thirdPartyPluginClasses) }
+        ) {
+            val (c1, c2) = pluginClasses.map { findSinglePlugin(it)!!.javaClass }
+            assertFalse { c1.isAssignableFrom(c2) }
+            assertFalse { c2.isAssignableFrom(c1) }
+        }
+    }
+
+    @Test
+    fun testPluginCouplingFromSameEntry() {
+        val pluginClasses = listOf(
+            pluginWithAppPropertyName,
+            "com.h0tk3y.third.party.plugin.ExtendPluginWithAppProperty"
+        )
+        withApp(
+            pluginPath = listOf(MusicPluginPath(pluginClasses, thirdPartyPluginClasses))
+        ) {
+            val (c1, c2) = pluginClasses.map { findSinglePlugin(it)!!.javaClass }
+            assertTrue { c1.isAssignableFrom(c2) }
+            assertFalse { c2.isAssignableFrom(c1) }
         }
     }
 
@@ -69,14 +123,14 @@ class PluginSupportTest {
 
     @Test
     fun testMissingPlugin() {
-        withApp {
+        withApp(true) {
             assertNull(findSinglePlugin("some.missing.plugin"))
         }
     }
 
     @Test
     fun testGetAllPlugins() {
-        withApp {
+        withApp(true) {
             val allPlugins = getPlugins(MusicPlugin::class.java)
             val playbackListeners = getPlugins(PlaybackListenerPlugin::class.java)
             val libraryContributors = getPlugins(MusicLibraryContributorPlugin::class.java)
@@ -99,8 +153,9 @@ class PluginSupportTest {
 
     @Test
     fun testNoSuitableInitializationRoutine() {
+        val pathForMalformedPlugin = MusicPluginPath(listOf(MalformedPlugin::class.java.canonicalName), emptyList())
         val exception = assertFailsWith<IllegalPluginException> {
-            withApp(enabledPlugins = defaultEnabledPlugins + MalformedPlugin::class.java.name) { }
+            withApp(pluginPath = defaultPlugins + pathForMalformedPlugin) { }
         }
         assertEquals(MalformedPlugin::class.java, exception.pluginClass)
     }
@@ -116,52 +171,67 @@ class PluginSupportTest {
     @Test
     fun testPluginMissingOnClasspath() {
         val exception = assertFailsWith<PluginClassNotFoundException> {
-            withApp(pluginClasspath = emptyList(), enabledPlugins = setOf(usageStatsPluginName)) {}
+            withApp(pluginPath = listOf(MusicPluginPath(listOf(usageStatsPluginName), emptyList()))) {}
         }
         assertEquals(usageStatsPluginName, exception.pluginClassName)
     }
 
     @Test
+    fun testLoadEmptyStateOnFirstStart() {
+        withApp(
+            true,
+            defaultPlugins + MusicPluginPath(listOf(PersistanceCheckerPlugin::class.java.canonicalName), emptyList())
+        ) {
+            val pluginInstance =
+                findSinglePlugin(PersistanceCheckerPlugin::class.java.canonicalName) as PersistanceCheckerPlugin
+            assertNull(pluginInstance.initBytes)
+        }
+    }
+
+    @Test
     fun testPluginCloseRoutine() {
+        val pathForAppCloseTrapPlugin =
+            MusicPluginPath(listOf(AppCloseTrapPlugin::class.java.canonicalName), emptyList())
+
         lateinit var pluginInstance: AppCloseTrapPlugin
-        withApp(enabledPlugins = defaultEnabledPlugins + AppCloseTrapPlugin::class.java.canonicalName) {
+        withApp(pluginPath = defaultPlugins + pathForAppCloseTrapPlugin) {
             pluginInstance = findSinglePlugin(AppCloseTrapPlugin::class.java.canonicalName) as AppCloseTrapPlugin
         }
         assertTrue(pluginInstance.closed)
     }
 
+
     @Test
     fun testSameBytesInStreams() {
         lateinit var pluginInstance: PersistanceCheckerPlugin
+
+        val plugins =
+            defaultPlugins + MusicPluginPath(listOf(PersistanceCheckerPlugin::class.java.canonicalName), emptyList())
+
         val expectedBytes = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8)
-        withApp(enabledPlugins = defaultEnabledPlugins + PersistanceCheckerPlugin::class.java.canonicalName) {
+        withApp(pluginPath = plugins) {
             pluginInstance =
                 findSinglePlugin(PersistanceCheckerPlugin::class.java.canonicalName) as PersistanceCheckerPlugin
             pluginInstance.persistBytes = expectedBytes
         }
-        withApp(enabledPlugins = defaultEnabledPlugins + PersistanceCheckerPlugin::class.java.canonicalName) {
+        withApp(pluginPath = plugins) {
             pluginInstance =
                 findSinglePlugin(PersistanceCheckerPlugin::class.java.canonicalName) as PersistanceCheckerPlugin
             assertTrue(expectedBytes.contentEquals(pluginInstance.initBytes))
-        }
-        withApp(
-            enabledPlugins = defaultEnabledPlugins + PersistanceCheckerPlugin::class.java.canonicalName,
-            wipePersistedData = true
-        ) {
-            pluginInstance =
-                findSinglePlugin(PersistanceCheckerPlugin::class.java.canonicalName) as PersistanceCheckerPlugin
-            assertTrue(pluginInstance.initBytes.isEmpty())
         }
     }
 
     @Test
     fun testContributorsOrdering() {
-        withApp(enabledPlugins = defaultEnabledPlugins +
-                AddPlaylistTestContributor1::class.java.canonicalName +
-                AddPlaylistTestContributor2::class.java.canonicalName
+        withApp(
+            pluginPath = defaultPlugins +
+                    MusicPluginPath(listOf(AddPlaylistTestContributor1::class.java.canonicalName), emptyList()) +
+                    MusicPluginPath(listOf(AddPlaylistTestContributor2::class.java.canonicalName), emptyList())
         ) {
-            val pl1 = findSinglePlugin(AddPlaylistTestContributor1::class.java.canonicalName) as AddPlaylistTestContributor
-            val pl2 = findSinglePlugin(AddPlaylistTestContributor2::class.java.canonicalName) as AddPlaylistTestContributor
+            val pl1 =
+                findSinglePlugin(AddPlaylistTestContributor1::class.java.canonicalName) as AddPlaylistTestContributor
+            val pl2 =
+                findSinglePlugin(AddPlaylistTestContributor2::class.java.canonicalName) as AddPlaylistTestContributor
 
             assertEquals(0, pl1.playlistsBefore.size)
             assertEquals(1, pl2.playlistsBefore.size)
@@ -173,11 +243,11 @@ class PluginSupportTest {
 }
 
 class PersistanceCheckerPlugin(override val musicAppInstance: MusicApp) : MusicPlugin {
-    lateinit var initBytes: ByteArray
+    var initBytes: ByteArray? = null
     var persistBytes: ByteArray? = null
 
     override fun init(persistedState: InputStream?) {
-        initBytes = persistedState?.readBytes() ?: byteArrayOf()
+        initBytes = persistedState?.readBytes()
     }
 
     override fun persist(stateStream: OutputStream) {
@@ -216,7 +286,7 @@ abstract class AddPlaylistTestContributor(override val musicAppInstance: MusicAp
 
     override fun contribute(current: MusicLibrary): MusicLibrary {
         playlistsBefore = current.playlists.toList()
-        current.playlists.add(Playlist(name, emptyList()))
+        current.playlists.add(Playlist(name, mutableListOf()))
         return current
     }
 

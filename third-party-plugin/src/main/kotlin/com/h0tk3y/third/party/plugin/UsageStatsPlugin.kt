@@ -32,7 +32,10 @@ class UsageStatsPlugin(override val musicAppInstance: MusicApp) :
         track.metadata[ARTIST_PLAYED_COUNT_KEY] = count.toString()
     }
 
-    override fun onPlaybackStateChange(oldPlaybackState: PlaybackState, newPlaybackState: PlaybackState) {
+    override fun onPlaybackStateChange(
+        oldPlaybackState: PlaybackState,
+        newPlaybackState: PlaybackState
+    ): PlaybackState? {
         if (oldPlaybackState.playlistPosition?.currentTrack != newPlaybackState.playlistPosition?.currentTrack) {
             val newTrack = newPlaybackState.playlistPosition?.currentTrack
             if (newTrack != null) {
@@ -43,6 +46,7 @@ class UsageStatsPlugin(override val musicAppInstance: MusicApp) :
                 }
             }
         }
+        return null
     }
 
     private var artistListenedToCount: MutableMap<String, Int> = mutableMapOf()
@@ -62,9 +66,9 @@ class UsageStatsPlugin(override val musicAppInstance: MusicApp) :
 
     override fun persist(stateStream: OutputStream) {
         stateStream.write(buildString {
-            appendln(runCount)
+            appendLine(runCount)
             artistListenedToCount.forEach { artist, count ->
-                appendln("$artist -> $count")
+                appendLine("$artist -> $count")
             }
         }.toByteArray())
     }

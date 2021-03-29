@@ -3,22 +3,14 @@ package com.h0tk3y.player.test
 import com.h0tk3y.player.MusicPlayer
 import com.h0tk3y.player.PlaybackListenerPlugin
 import com.h0tk3y.player.PlaybackState
+import com.h0tk3y.player.handlePlaybackStateWithListeners
 
-class MockPlayer(
+internal class MockPlayer(
     override val playbackListeners: List<PlaybackListenerPlugin>
 ) : MusicPlayer {
     override var playbackState: PlaybackState = PlaybackState.Stopped
         set(value) {
-            if (value is PlaybackState.Playing && value.isResumed) {
-                require(field is PlaybackState.Paused && field.playlistPosition == value.playlistPosition) {
-                    "isResumed is only allowed when the previous state was com.h0tk3y.player.PlaybackState.Paused at the same track"
-                }
-            }
-
-            for (listener in playbackListeners) {
-                listener.onPlaybackStateChange(field, value)
-            }
-            field = value
+            field = handlePlaybackStateWithListeners(field, value, playbackListeners)
         }
 
     internal fun finishedTrack() {
@@ -27,7 +19,7 @@ class MockPlayer(
         playbackState = if (playNext) {
             PlaybackState.Playing(
                 playlistPosition.copy(position = playlistPosition.position + 1),
-                isResumed = false
+                isResumedFromPause = false
             )
         } else {
             PlaybackState.Stopped

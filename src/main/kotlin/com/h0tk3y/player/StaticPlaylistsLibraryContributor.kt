@@ -26,8 +26,8 @@ class StaticPlaylistsLibraryContributor(override val musicAppInstance: MusicApp)
             )
         }
 
-        playlists += Playlist("beeps", beepTracks)
-        playlists += Playlist("samples", sampleTracks)
+        playlists += Playlist("beeps", beepTracks.toMutableList())
+        playlists += Playlist("samples", sampleTracks.toMutableList())
     }
 
     companion object {
