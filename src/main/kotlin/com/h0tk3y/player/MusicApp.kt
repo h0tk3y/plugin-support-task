@@ -83,7 +83,7 @@ open class MusicApp(
             else
                 PlaybackState.Stopped
             player.playbackState = newState
-            if (newState is PlaybackState.Playing) true else false
+            newState is PlaybackState.Playing
         } ?: false
 
     @Volatile
